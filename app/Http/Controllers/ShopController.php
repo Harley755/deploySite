@@ -5,35 +5,57 @@ namespace App\Http\Controllers;
 use App\Models\Shop;
 use Illuminate\Http\Request;
 use App\Http\Requests\ShopRequest;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Process;
 
 class ShopController extends Controller
 {
     public function store(ShopRequest $request)
     {
-        // $shop = Shop::create($request->validated() + ['user_id' => auth()->id()]);
 
-        // $this->deployerSite($request->name, auth()->user());
 
-        $contenu = "
-            <?php
-            echo 'Nom: ' .  '<br>';
-        ";
-        exec("mkdir /var/www/html/$request->name");
-        exec("touch /var/www/html/$request->name/index.php");
-        file_put_contents("/var/www/html/$request->name/index.php", $contenu);
+        $subdomain = strtolower($request->name);
 
-        $hostsEntry = "127.0.1.1       $request->name.domaine.xxx";
-        exec("echo '$hostsEntry' | sudo tee -a /etc/hosts");
+        $shop = Shop::create([
+            'name' => $subdomain,
+            'user_id' => auth()->id(),
+        ]);
 
-        return redirect("http://{$request->name}.domaine.xxx");
+        // Créer un sous-domaine et déployer le site
+        $this->deployShop($shop);
+
+        return redirect()->route('dashboard')->with('success', 'Boutique créée avec succès !');
     }
 
-    public function show($shop)
+
+    private function deployShop(Shop $shop)
     {
-        $shop = Shop::where('name', $shop)->firstOrFail();
+        $subdomain = $shop->name . '.domain.xxx';
+        $userName = $shop->user->name;
+        $userEmail = $shop->user->email;
+        $userAge = $shop->user->age;
+        $nameShop = $shop->name;
 
-        dd($shop);
+        // Créer le répertoire pour le sous-domaine
+        exec("sudo mkdir /var/www/html/laravel-shop-deployer/public/{$shop->name}");
+        exec("sudo touch /var/www/html/laravel-shop-deployer/public/{$shop->name}/index.php");
 
-        return view('shop.show', compact('shop'));
+        exec("sudo chmod 644 /var/www/html/laravel-shop-deployer/public/{$shop->name}/index.php");
+
+        // Définir la configuration Apache
+        $apacheConfig = "
+            <VirtualHost *:80>
+                ServerName $subdomain
+                DocumentRoot /var/www/html/laravel-shop-deployer/public/{$shop->name}
+                <Directory /var/www/html/laravel-shop-deployer/public/{$shop->name}>
+                    AllowOverride All
+                    Require all granted
+                </Directory>
+            </VirtualHost>
+        ";
+
+        // Exécuter le script Bash avec sudo pour créer le fichier de config et activer le site
+        $escapedConfig = escapeshellarg($apacheConfig);
+        exec("sudo /usr/local/bin/deploy_shop.sh \"$subdomain\" \"$escapedConfig\" \"$userName\" \"{$shop->name}\" \"$userEmail\" \"$userAge\"  ");
     }
 }
